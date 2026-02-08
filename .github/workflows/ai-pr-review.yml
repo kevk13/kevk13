@@ -1,0 +1,82 @@
+name: AI PR Reviewer
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          DIFF=$(git diff origin/${{ github.event.pull_request.base.ref }}...HEAD -- . ':!*.lock' ':!*.min.*' | head -c 10000)
+          echo "diff<<DIFF_EOF" >> "$GITHUB_OUTPUT"
+          echo "$DIFF" >> "$GITHUB_OUTPUT"
+          echo "DIFF_EOF" >> "$GITHUB_OUTPUT"
+
+      - name: AI Review
+        uses: actions/github-script@v7
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          script: |
+            const diff = `${{ steps.diff.outputs.diff }}`;
+            const prTitle = context.payload.pull_request.title;
+            const prBody = context.payload.pull_request.body || '';
+
+            if (!process.env.OPENAI_API_KEY) {
+              console.log('No OPENAI_API_KEY configured. Skipping AI review.');
+              return;
+            }
+
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: [
+                  {
+                    role: 'system',
+                    content: `You are an expert code reviewer. Review the following PR diff and provide:
+            1. A brief summary of changes
+            2. Potential issues or bugs
+            3. Suggestions for improvement
+            4. Security concerns if any
+
+            Be concise, constructive, and use markdown formatting. Use code blocks when referencing specific code.`,
+                  },
+                  {
+                    role: 'user',
+                    content: `PR Title: ${prTitle}\n\nPR Description: ${prBody}\n\nDiff:\n\`\`\`diff\n${diff}\n\`\`\``,
+                  },
+                ],
+                max_tokens: 1000,
+              }),
+            });
+
+            const data = await response.json();
+            const review = data.choices?.[0]?.message?.content;
+
+            if (review) {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                event: 'COMMENT',
+                body: `## AI Code Review :robot:\n\n${review}\n\n---\n*Automated review powered by AI. Please use this as a supplement to human review.*`,
+              });
+            }

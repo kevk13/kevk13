@@ -1,0 +1,96 @@
+name: AI Issue Responder
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  respond:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Analyze and respond to issue
+        uses: actions/github-script@v7
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          script: |
+            const issueTitle = context.payload.issue.title;
+            const issueBody = context.payload.issue.body || '';
+
+            // Label assignment based on keywords
+            const labelMap = {
+              bug: ['bug', 'error', 'broken', 'fix', 'crash', 'fail'],
+              enhancement: ['feature', 'enhance', 'improve', 'add', 'request'],
+              question: ['how', 'what', 'why', 'question', 'help', 'explain'],
+              documentation: ['docs', 'document', 'readme', 'typo', 'spelling'],
+            };
+
+            const text = `${issueTitle} ${issueBody}`.toLowerCase();
+            const labelsToAdd = [];
+
+            for (const [label, keywords] of Object.entries(labelMap)) {
+              if (keywords.some(kw => text.includes(kw))) {
+                labelsToAdd.push(label);
+              }
+            }
+
+            // Apply labels if any matched
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: labelsToAdd,
+              });
+            }
+
+            // If an OpenAI API key is configured, generate an AI response
+            if (process.env.OPENAI_API_KEY) {
+              const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'gpt-4o-mini',
+                  messages: [
+                    {
+                      role: 'system',
+                      content: 'You are a helpful GitHub issue responder. Acknowledge the issue, ask clarifying questions if needed, and provide initial guidance. Keep responses concise and friendly. Use markdown formatting.',
+                    },
+                    {
+                      role: 'user',
+                      content: `Issue Title: ${issueTitle}\n\nIssue Body: ${issueBody}`,
+                    },
+                  ],
+                  max_tokens: 500,
+                }),
+              });
+
+              const data = await response.json();
+              const aiReply = data.choices?.[0]?.message?.content;
+
+              if (aiReply) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.issue.number,
+                  body: `**AI Assistant** :robot:\n\n${aiReply}\n\n---\n*This is an automated response. A human will follow up soon.*`,
+                });
+              }
+            } else {
+              // Fallback: post a simple acknowledgment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `Thanks for opening this issue! It has been automatically labeled and a maintainer will review it shortly.`,
+              });
+            }

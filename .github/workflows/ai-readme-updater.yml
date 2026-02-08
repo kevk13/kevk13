@@ -1,0 +1,91 @@
+name: AI Profile Updater
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # Runs every Monday at midnight UTC
+  workflow_dispatch: # Allows manual triggering
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch GitHub activity
+        id: activity
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get recent public events for the user
+            const events = await github.rest.activity.listPublicEventsForUser({
+              username: context.repo.owner,
+              per_page: 20,
+            });
+
+            // Get user's repos sorted by recent updates
+            const repos = await github.rest.repos.listForUser({
+              username: context.repo.owner,
+              sort: 'updated',
+              per_page: 5,
+            });
+
+            const recentRepos = repos.data
+              .filter(r => !r.fork)
+              .map(r => `- [${r.name}](${r.html_url}) - ${r.description || 'No description'}`)
+              .join('\n');
+
+            const stats = {
+              publicRepos: repos.data.length,
+              recentRepos: recentRepos,
+            };
+
+            core.setOutput('stats', JSON.stringify(stats));
+
+      - name: Update README with activity
+        uses: actions/github-script@v7
+        env:
+          STATS: ${{ steps.activity.outputs.stats }}
+        with:
+          script: |
+            const fs = require('fs');
+            const stats = JSON.parse(process.env.STATS);
+
+            const now = new Date().toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            });
+
+            // Read current README
+            let readme = fs.readFileSync('README.md', 'utf8');
+
+            // Update the dynamic activity section if markers exist
+            const startMarker = '<!-- ACTIVITY:START -->';
+            const endMarker = '<!-- ACTIVITY:END -->';
+
+            const activitySection = `${startMarker}
+            ### Recent Activity
+            *Last updated: ${now}*
+
+            #### Recently Updated Repositories
+            ${stats.recentRepos}
+            ${endMarker}`;
+
+            if (readme.includes(startMarker) && readme.includes(endMarker)) {
+              const regex = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`, 'g');
+              readme = readme.replace(regex, activitySection);
+            } else {
+              readme += `\n\n${activitySection}\n`;
+            }
+
+            fs.writeFileSync('README.md', readme);
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git diff --quiet README.md || (git add README.md && git commit -m "chore: update profile with recent activity" && git push)
