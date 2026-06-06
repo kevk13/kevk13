@@ -1,4 +1,5 @@
-AI engineer who ships agentic systems and full-stack AI products. TypeScript + Python — Mastra, LangGraph, React, Streamlit.
+AI engineer who ships agentic systems and full-stack AI products. 
+TypeScript + Python — Mastra, LangGraph, React, Streamlit.
 
 <!--
 **kevk13/kevk13** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
