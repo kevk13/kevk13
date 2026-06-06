@@ -1,4 +1,4 @@
-### Hi there 👋
+AI engineer building agentic systems and full-stack AI products end to end. LangGraph, TypeScript + Python.
 
 <!--
 **kevk13/kevk13** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
